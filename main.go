@@ -5,18 +5,21 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 )
 
 var (
-	config *Config
+	verboseLogger *log.Logger = log.New(os.Stdout, "Debug: ", log.LstdFlags)
+	config        *Config
 )
 
 // Configuration holds the program settings
 type Config struct {
 	WatchFolderPath string // folder to be watch for changes
 	WatchFilePath   string // File to be watched for changes
-	HTTPFilePath    string // by default the file must be watched, which means if this file is changed, it must be reloaded.
-	HTTPFolderPath  string // by default the folder must be watched, which means if any file in the folder is changed, it must be reloaded.
+	// .http files must be watched for changes as well, and if are changed, the program must be update.
+	HTTPFilePath    string // optional, if no file path is passed, it must search the first one on the same directory program was run.
+	HTTPFolderPath  string // optional, if no folder path is passed, it must search all .http files in the same directory program was run.
 	ExcludeFile     string // this can be an exact folder or a pattern of files, which means this files won't be watched.
 	ExcludeFolder   string // this means any file inside this folder will be ignore or not watched.
 	WaitRequestTime int    // Time to wait in between the HTTP requests
@@ -24,9 +27,14 @@ type Config struct {
 	Verbose         bool   // Detailed Loging for debugging purposes
 }
 
+func logVerbose(format string, args ...any) {
+	if config.Verbose {
+		verboseLogger.Printf(format, args...)
+	}
+}
 func parseConfig() (*Config, error) {
 	// Default configuration values
-	config := &Config{
+	config = &Config{
 		WatchFolderPath: "",
 		WatchFilePath:   "",
 		HTTPFilePath:    "",
@@ -51,13 +59,34 @@ func parseConfig() (*Config, error) {
 
 	flag.Parse()
 
+	flag.Visit(func(f *flag.Flag) {
+		logVerbose("Flag passed: %s = %s", f.Name, f.Value.String())
+	})
+
 	// Validate configuration
 	if config.WatchFolderPath == "" && config.WatchFilePath == "" {
 		return nil, fmt.Errorf("either watch-folder or watch-file must be specified")
 	}
 
-	if config.HTTPFilePath == "" && config.HTTPFolderPath == "" {
-		return nil, fmt.Errorf("either http-file or http-folder must be specified")
+	if config.HTTPFilePath != "" {
+		info, err := checkPathExists(config.HTTPFilePath)
+		if err != nil {
+			return nil, fmt.Errorf("file path does not exists")
+		}
+		if info.IsDir() {
+			return nil, fmt.Errorf("provided http file but is directory: %s", config.HTTPFilePath)
+		}
+	}
+
+	if config.HTTPFolderPath != "" {
+		info, err := checkPathExists(config.HTTPFolderPath)
+		if err != nil {
+			return nil, fmt.Errorf("folder path does not exists")
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("provided http folder is not a directory: %s", config.HTTPFolderPath)
+
+		}
 	}
 
 	if config.WaitRequestTime < 0 {
@@ -70,48 +99,28 @@ func parseConfig() (*Config, error) {
 
 	return config, nil
 }
-func logVerbose(format string, args ...interface{}) {
-	if config.Verbose {
-		log.Printf(format, args...)
-	}
-}
-
-// logPassedFlags logs flags that were explicitly passed by the user
-func logPassedFlags() {
-	flag.Visit(func(f *flag.Flag) {
-		logVerbose("Flag passed: %s = %s", f.Name, f.Value.String())
-
-		// Additional verbose messages for specific flags
-		switch f.Name {
-		case "watch-folder":
-			logVerbose("Watching folder for changes: %s", config.WatchFolderPath)
-		case "watch-file":
-			logVerbose("Watching file for changes: %s", config.WatchFilePath)
-		case "http-file":
-			logVerbose("Using HTTP template file: %s", config.HTTPFilePath)
-		case "http-folder":
-			logVerbose("Using HTTP template folder: %s", config.HTTPFolderPath)
-		case "exclude-file":
-			logVerbose("Excluded file pattern: %s", config.ExcludeFile)
-		case "exclude-folder":
-			logVerbose("Excluded folder: %s", config.ExcludeFolder)
-		case "wait-time":
-			logVerbose("Wait time between requests: %d ms", config.WaitRequestTime)
-		case "max-concurrent":
-			logVerbose("Maximum concurrent requests: %d", config.MaxConcurrent)
+func checkPathExists(path string) (os.FileInfo, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("http file doesnot exist: %s", path)
 		}
-	})
+		return nil, fmt.Errorf("error checking http file: %w", err)
+	}
+	return info, nil
 }
+
 func main() {
-	var err error
-	config, err = parseConfig()
+	fmt.Println("hello")
+	_, err := parseConfig()
 	if err != nil {
 		log.Fatalf("Error parsing configuration: %v", err)
 	}
+	fmt.Println("hello")
 
-	logVerbose("Configuration loaded successfully")
+	// logVerbose("Configuration loaded successfully")
 
 	// Log only the flags that were explicitly passed
-	logPassedFlags()
+	//logPassedFlags()
 
 }
