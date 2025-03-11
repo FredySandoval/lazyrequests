@@ -2,125 +2,129 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
-var (
-	verboseLogger *log.Logger = log.New(os.Stdout, "Debug: ", log.LstdFlags)
-	config        *Config
-)
-
-// Configuration holds the program settings
-type Config struct {
-	WatchFolderPath string // folder to be watch for changes
-	WatchFilePath   string // File to be watched for changes
-	// .http files must be watched for changes as well, and if are changed, the program must be update.
-	HTTPFilePath    string // optional, if no file path is passed, it must search the first one on the same directory program was run.
-	HTTPFolderPath  string // optional, if no folder path is passed, it must search all .http files in the same directory program was run.
-	ExcludeFile     string // this can be an exact folder or a pattern of files, which means this files won't be watched.
-	ExcludeFolder   string // this means any file inside this folder will be ignore or not watched.
-	WaitRequestTime int    // Time to wait in between the HTTP requests
-	MaxConcurrent   int    // one at the same time, we want the requests to go one after the other, one must fish before other one is sent.
-	Verbose         bool   // Detailed Loging for debugging purposes
-}
-
-func logVerbose(format string, args ...any) {
-	if config.Verbose {
-		verboseLogger.Printf(format, args...)
-	}
-}
-func parseConfig() (*Config, error) {
-	// Default configuration values
-	config = &Config{
-		WatchFolderPath: "",
-		WatchFilePath:   "",
-		HTTPFilePath:    "",
-		HTTPFolderPath:  "",
-		ExcludeFile:     "",
-		ExcludeFolder:   "",
-		WaitRequestTime: 1000, // Default 1 second in milliseconds
-		MaxConcurrent:   1,    // Default to single concurrent request
-		Verbose:         false,
-	}
-
-	// Parse command line flags
-	flag.StringVar(&config.WatchFolderPath, "watch-folder", config.WatchFolderPath, "Folder to watch for changes")
-	flag.StringVar(&config.WatchFilePath, "watch-file", config.WatchFilePath, "File to watch for changes")
-	flag.StringVar(&config.HTTPFilePath, "http-file", config.HTTPFilePath, "HTTP template file to be watched and reloaded")
-	flag.StringVar(&config.HTTPFolderPath, "http-folder", config.HTTPFolderPath, "HTTP template folder to be watched and reloaded")
-	flag.StringVar(&config.ExcludeFile, "exclude-file", config.ExcludeFile, "File pattern to exclude from watching")
-	flag.StringVar(&config.ExcludeFolder, "exclude-folder", config.ExcludeFolder, "Folder to exclude from watching")
-	flag.IntVar(&config.WaitRequestTime, "wait-time", config.WaitRequestTime, "Time to wait between HTTP requests (milliseconds)")
-	flag.IntVar(&config.MaxConcurrent, "max-concurrent", config.MaxConcurrent, "Maximum number of concurrent requests")
-	flag.BoolVar(&config.Verbose, "verbose", config.Verbose, "Enable verbose logging")
-
-	flag.Parse()
-
-	flag.Visit(func(f *flag.Flag) {
-		logVerbose("Flag passed: %s = %s", f.Name, f.Value.String())
-	})
-
-	// Validate configuration
-	if config.WatchFolderPath == "" && config.WatchFilePath == "" {
-		return nil, fmt.Errorf("either watch-folder or watch-file must be specified")
-	}
-
-	if config.HTTPFilePath != "" {
-		info, err := checkPathExists(config.HTTPFilePath)
-		if err != nil {
-			return nil, fmt.Errorf("file path does not exists")
-		}
-		if info.IsDir() {
-			return nil, fmt.Errorf("provided http file but is directory: %s", config.HTTPFilePath)
-		}
-	}
-
-	if config.HTTPFolderPath != "" {
-		info, err := checkPathExists(config.HTTPFolderPath)
-		if err != nil {
-			return nil, fmt.Errorf("folder path does not exists")
-		}
-		if !info.IsDir() {
-			return nil, fmt.Errorf("provided http folder is not a directory: %s", config.HTTPFolderPath)
-
-		}
-	}
-
-	if config.WaitRequestTime < 0 {
-		return nil, fmt.Errorf("wait-time cannot be negative")
-	}
-
-	if config.MaxConcurrent < 1 {
-		return nil, fmt.Errorf("max-concurrent must be at least 1")
-	}
-
-	return config, nil
-}
-func checkPathExists(path string) (os.FileInfo, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("http file doesnot exist: %s", path)
-		}
-		return nil, fmt.Errorf("error checking http file: %w", err)
-	}
-	return info, nil
+type HTTPFile struct {
+	Method      string
+	URL         string
+	Headers     map[string]string // "hello":"world"
+	Body        string
+	ContentType string
 }
 
 func main() {
-	fmt.Println("hello")
-	_, err := parseConfig()
+	config, err := parseConfig()
 	if err != nil {
 		log.Fatalf("Error parsing configuration: %v", err)
 	}
-	fmt.Println("hello")
+	logVerbose(config, "Configuration loaded successfully")
 
-	// logVerbose("Configuration loaded successfully")
+	// Load HTTP templates
+	httpFiles, err := readHTTPFile(config)
+	if err != nil {
+		fmt.Println(err)
+	}
 
-	// Log only the flags that were explicitly passed
-	//logPassedFlags()
+	// Print the content and path of each HTTP file
+	for i, file := range httpFiles {
+		fmt.Println("Content:", i, file.Content)
+		fmt.Println("Path:", i, file.FilePath)
+	}
 
+	// Additional code for watching files and sending HTTP requests would go here
+}
+
+// parseHTTPFile reads and parses an HTTP template file
+// receives string and returns a string of HTTP
+// func parseHTTPFile(filepath string) (*HTTPFile, error) {
+//
+// }
+
+// HTTPFileContent represents the content of an HTTP file along with its path
+type HTTPFileContent struct {
+	Content  string
+	FilePath string
+}
+
+func readHTTPFile(config *Config) ([]HTTPFileContent, error) {
+	var filePaths []string
+	var results []HTTPFileContent
+	logVerbose(config, "Reading http files...")
+
+	// Check if a specific HTTP file is provided
+	if config.HTTPFilePath != "" {
+		// Convert to absolute path if needed
+		absPath, err := filepath.Abs(config.HTTPFilePath)
+		if err != nil {
+			return nil, fmt.Errorf("error getting absolute path for %s: %v", config.HTTPFilePath, err)
+		}
+		filePaths = append(filePaths, absPath)
+	} else if config.HTTPFolderPath != "" {
+		// Convert folder path to absolute path
+		absFolderPath, err := filepath.Abs(config.HTTPFolderPath)
+		if err != nil {
+			return nil, fmt.Errorf("error getting absolute path for %s: %v", config.HTTPFolderPath, err)
+		}
+
+		// Read all .http files from the specified folder
+		files, err := os.ReadDir(absFolderPath)
+		if err != nil {
+			return nil, fmt.Errorf("error reading directory %s: %v", absFolderPath, err)
+		}
+
+		for _, file := range files {
+			if !file.IsDir() && strings.HasSuffix(file.Name(), ".http") {
+				filePaths = append(filePaths, filepath.Join(absFolderPath, file.Name()))
+			}
+		}
+
+		if len(filePaths) == 0 {
+			return nil, fmt.Errorf("no .http files found in directory %s", absFolderPath)
+		}
+	} else {
+		// Find .http file in current directory if no file or folder specified
+		dir, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("error getting current directory: %v", err)
+		}
+
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			return nil, fmt.Errorf("error reading directory: %v", err)
+		}
+
+		for _, file := range files {
+			if !file.IsDir() && strings.HasSuffix(file.Name(), ".http") {
+				filePaths = append(filePaths, filepath.Join(dir, file.Name()))
+				break // Only use the first .http file found when in current directory
+			}
+		}
+
+		if len(filePaths) == 0 {
+			return nil, fmt.Errorf("no .http file found in the current directory")
+		}
+	}
+
+	// Process each file
+	for _, filePath := range filePaths {
+		// Read the file content
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("error reading file %s: %v", filePath, err)
+		}
+		fileContent := string(content)
+
+		// Add this file to the results
+		results = append(results, HTTPFileContent{
+			Content:  fileContent,
+			FilePath: filePath,
+		})
+	}
+
+	return results, nil
 }
