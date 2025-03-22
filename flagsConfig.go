@@ -30,7 +30,7 @@ func logVerbose(config *Config, format string, args ...any) {
 	}
 }
 
-func parseConfig() (*Config, error) {
+func flagsConfig() (*Config, error) {
 	// Default configuration values
 	config := &Config{
 		WatchFolderPath: "",

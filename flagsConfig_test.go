@@ -25,10 +25,10 @@ func TestParseConfig_Errors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			resetFlags()
 			os.Args = tc.args
-			config, err := parseConfig()
+			Config, err := flagsConfig()
 
-			if config != nil {
-				t.Errorf("Should be nil: %v", config)
+			if Config != nil {
+				t.Errorf("Should be nil: %v", Config)
 			}
 			if err == nil {
 				t.Errorf("Should output error: %v", err)
