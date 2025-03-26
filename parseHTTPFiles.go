@@ -20,62 +20,179 @@ type HTTPFileContent struct {
 }
 
 type HTTPBlock struct {
-	ID                int
-	BlockContent      string // represents the raw string request
-	CommentIdentifier string
-	Request           *http.Request // represents the parsed request ready to be sent
-	RequestString     string
-	ExpectedResponse  string // represents the expected response to be compared with
+	ID                     int
+	BlockContent           string // represents the raw string request
+	CommentIdentifier      string
+	Request                *http.Request // represents the parsed request ready to be sent
+	RequestString          string
+	ExpectedResponse       *http.Response // represents the expected response to be compared with
+	ExpectedResponseString string
 }
 
 //	type rawHTTPFileContent struct {
 //	    Content  string
 //	    FilePath string
 //	}
-func processHTTPFiles(config *Config) {
+func processHTTPFiles(config *Config) ([]HTTPFileContent, error) {
 	httpFileContent, err := getRawContent(config)
 	if err != nil {
-		fmt.Println("error:", err)
+		return nil, fmt.Errorf("error at parseHTTPFiles.go - getRawContent() %w", err)
 	}
-	logVerbose(config, "get Raw content")
 	httpFileContent, err = removeComments(httpFileContent)
 	if err != nil {
-		fmt.Println("error:", err)
+		return nil, fmt.Errorf("error at parseHTTPFiles.go - removeComments() %w", err)
 	}
-	logVerbose(config, "remove comments")
 	httpFileContent, err = getGlobalVariables(httpFileContent)
 	if err != nil {
-		fmt.Println("error:", err)
+		return nil, fmt.Errorf("error at parseHTTPFiles.go - getGlobalVariables() %w", err)
 	}
-	logVerbose(config, "get global variables")
-	// TODO - parseBlocks
-	// working on the blocks
 	httpFileContent, err = parseBlocks(httpFileContent)
 	if err != nil {
-		fmt.Println("error:", err)
+		return nil, fmt.Errorf("error at parseHTTPFiles.go - parseBlocks() %w", err)
 	}
 	httpFileContent, err = checkNormalizationOnBlocks(httpFileContent, config)
 	if err != nil {
-		fmt.Println("error:", err)
+		return nil, fmt.Errorf("error at parseHTTPFiles.go - checkNormalizationOnBlocks() %w", err)
 	}
 	httpFileContent, err = handleHTTPRequestMultiline(httpFileContent, config)
 	if err != nil {
-		fmt.Println("F error:", err)
+		return nil, fmt.Errorf("error at parseHTTPFiles.go - handleHTTPRequestMultiline() %w", err)
 	}
-	//fmt.Println(httpFileContent[2].Blocks[7])
 	httpFileContent, err = validateHTTPRequestLine(httpFileContent, config)
 	if err != nil {
-		fmt.Println("error:", err)
+		return nil, fmt.Errorf("error at parseHTTPFiles.go - validateHTTPRequestLine() %w", err)
 	}
-
-	// fmt.Printf("Hex (spaced):\r\n% x\n", []byte(rawRequest))
 	httpFileContent, err = parseHTTPBlockRequests(httpFileContent)
 	if err != nil {
-		fmt.Println("error:", err)
+		return nil, fmt.Errorf("error at parseHTTPFiles.go - parseHTTPBlockRequests() %w", err)
 	}
-	fmt.Println(httpFileContent[2].Blocks[12].RequestString)
-	// fmt.Println(httpFileContent)
+	httpFileContent, err = parseHTTPBlockResponses(httpFileContent, config)
+	if err != nil {
+		return nil, fmt.Errorf("error at parseHTTPFiles.go - parseHTTPBlockResponse() %w", err)
+	}
 
+	// TODO - create function to remove the RESPONSES from the blocks
+	// maybe start working on the testing.
+
+	// fmt.Printf("Hex (spaced):\r\n% x\n", []byte(rawRequest))
+	return httpFileContent, nil
+}
+func parseHTTPBlockResponses(httpFileContent []HTTPFileContent, config *Config) ([]HTTPFileContent, error) {
+	logVerbose(config, "Processing HTTP response blocks and attaching them to requests...")
+	for i := range httpFileContent {
+		file := &httpFileContent[i]
+		logVerbose(config, fmt.Sprintf("Processing file: %s", file.FilePath))
+
+		// Iterate through blocks, but stop at the last block (since we need to look ahead)
+		for j := 0; j < len(file.Blocks)-1; j++ {
+			currentBlock := &file.Blocks[j]
+			nextBlock := &file.Blocks[j+1]
+
+			// Skip empty current blocks
+			if strings.TrimSpace(currentBlock.BlockContent) == "" {
+				logVerbose(config, fmt.Sprintf("Skipping empty block %d", currentBlock.ID))
+				continue
+			}
+
+			// Skip empty next blocks
+			if strings.TrimSpace(nextBlock.BlockContent) == "" {
+				logVerbose(config, fmt.Sprintf("Next block %d is empty, skipping", nextBlock.ID))
+				continue
+			}
+
+			// Check if current block is a request
+			currentBlockLines := strings.Split(strings.TrimSpace(currentBlock.BlockContent), "\n")
+			if len(currentBlockLines) == 0 {
+				continue
+			}
+
+			firstLineOfCurrentBlock := currentBlockLines[0]
+			if !isHTTPRequestLine(firstLineOfCurrentBlock) {
+				logVerbose(config, fmt.Sprintf("Current block %d is not a request block, skipping", currentBlock.ID))
+				continue // Skip if current block is not a request
+			}
+
+			// Check if the next block is a response
+			nextBlockLines := strings.Split(strings.TrimSpace(nextBlock.BlockContent), "\n")
+			if len(nextBlockLines) == 0 {
+				continue
+			}
+
+			firstLineOfNextBlock := nextBlockLines[0]
+			if !isHTTPResponseLine(firstLineOfNextBlock) {
+				logVerbose(config, fmt.Sprintf("Next block %d is not a response block, skipping", nextBlock.ID))
+				continue // Skip if next block is not a response
+			}
+
+			logVerbose(config, fmt.Sprintf("Processing response block %d for request block %d", nextBlock.ID, currentBlock.ID))
+
+			// Create a buffer from the next block content
+			bytesBuffer := bytes.NewBufferString(nextBlock.BlockContent)
+			bufferReader := bufio.NewReader(bytesBuffer)
+
+			// Parse the HTTP response
+			resp, err := http.ReadResponse(bufferReader, nil)
+			if err != nil {
+				return nil, fmt.Errorf("error parsing HTTP response in file %s, block %d: %w",
+					file.FilePath, nextBlock.ID, err)
+			}
+
+			// Read the response body if it exists
+			var bodyBytes []byte
+			if resp.Body != nil {
+				bodyBytes, err = io.ReadAll(resp.Body)
+				if err != nil {
+					return nil, fmt.Errorf("error reading response body in file %s, block %d: %w",
+						file.FilePath, nextBlock.ID, err)
+				}
+				// Close the body reader
+				resp.Body.Close()
+
+				// Create a new body reader for later use
+				resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+			}
+
+			// Keep a string representation for debugging or display purposes
+			var responseStr strings.Builder
+
+			// Format the response for the string representation
+			responseStr.WriteString(fmt.Sprintf("HTTP/%d.%d %d %s\r\n",
+				resp.ProtoMajor, resp.ProtoMinor, resp.StatusCode, resp.Status))
+
+			// Add headers
+			for key, values := range resp.Header {
+				for _, value := range values {
+					responseStr.WriteString(fmt.Sprintf("%s: %s\r\n", key, value))
+				}
+			}
+
+			// Add an empty line to separate headers from body
+			responseStr.WriteString("\r\n")
+
+			// Add body if exists
+			if len(bodyBytes) > 0 {
+				responseStr.Write(bodyBytes)
+			}
+
+			// Attach the response to the current block
+			currentBlock.ExpectedResponse = resp
+			currentBlock.ExpectedResponseString = responseStr.String()
+
+			logVerbose(config, fmt.Sprintf("Attached response from block %d to request block %d with status code %d",
+				nextBlock.ID, currentBlock.ID, resp.StatusCode))
+		}
+	}
+
+	logVerbose(config, "Completed processing HTTP response blocks and attaching them to requests")
+	return httpFileContent, nil
+}
+
+// Helper function to check if a line is an HTTP response line
+func isHTTPResponseLine(line string) bool {
+	// HTTP response must start with HTTP protocol version followed by status code
+	// Pattern: HTTP/X.X XXX ...
+	pattern := regexp.MustCompile(`^HTTP/\d\.\d\s+\d{3}`)
+	return pattern.MatchString(line)
 }
 func checkNormalizationOnBlocks(httpFileContent []HTTPFileContent, config *Config) ([]HTTPFileContent, error) {
 	for i, file := range httpFileContent {
@@ -218,10 +335,37 @@ func validateHTTPRequestLine(httpFileContent []HTTPFileContent, config *Config) 
 
 			// Get the first line and check if it's an HTTP request using isHTTPRequestLine
 			firstLine := strings.TrimSpace(lines[0])
+			firstLineParts := strings.Fields(firstLine)
 
-			// Skip if not a request
-			if !isHTTPRequestLine(firstLine) {
-				continue
+			method_line := firstLineParts[0]
+			httpMethods_LowerCase := []string{"get", "post", "put", "delete", "patch", "head", "options"}
+			isLowerCase := false
+			// IF no method assumge GET
+			for _, validMethod := range httpMethods_LowerCase {
+				if method_line == validMethod {
+					isLowerCase = true
+					break
+				}
+			}
+			if isLowerCase {
+				firstLineParts[0] = strings.ToUpper(method_line)
+				firstLine = strings.Join(firstLineParts, " ")
+				lines[0] = firstLine
+				httpFileContent[i].Blocks[j].BlockContent = strings.Join(lines, "\n")
+			}
+
+			method := strings.ToUpper(firstLineParts[0])
+			httpMethods := []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
+			isValidMethod := false
+			// IF no method assumge GET
+			for _, validMethod := range httpMethods {
+				if method == validMethod {
+					isValidMethod = true
+					break
+				}
+			}
+			if !isValidMethod {
+				firstLine = "GET " + firstLine
 			}
 
 			// Check if HTTP version is missing (should have "HTTP/X.X" at the end)
@@ -233,6 +377,13 @@ func validateHTTPRequestLine(httpFileContent []HTTPFileContent, config *Config) 
 				httpFileContent[i].Blocks[j].BlockContent = strings.Join(lines, "\n")
 				logVerbose(config, fmt.Sprintf("validated, %s", lines))
 			}
+
+			// Skip if not a request
+			if !isHTTPRequestLine(firstLine) {
+				fmt.Println(j, "empty 1")
+				continue
+			}
+
 		}
 	}
 
