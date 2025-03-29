@@ -77,6 +77,10 @@ func processHTTPFiles(config *Config) ([]HTTPFileContent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error at parseHTTPFiles.go - parseHTTPBlockResponse() %w", err)
 	}
+	httpFileContent, err = removeHTTPBlockResponsesFromHttpFileContent(httpFileContent, config)
+	if err != nil {
+
+	}
 	return httpFileContent, nil
 }
 
@@ -775,12 +779,12 @@ func parseHTTPBlockResponses(httpFileContent []HTTPFileContent, config *Config) 
 						continue
 					}
 					expectedResponse := &http.Response{
+						Status:     response.StatusText,
 						StatusCode: response.StatusCode,
 						Proto:      response.Protocol,
 						Header:     make(http.Header),
 						Body:       io.NopCloser(strings.NewReader(response.ResponseBody)),
 					}
-
 					for key, value := range response.ResponseHeaders {
 						expectedResponse.Header.Set(key, value)
 					}
@@ -851,4 +855,40 @@ func parseHTTPResponse(responseContent string) (*HTTPResponse, error) {
 		ResponseHeaders: headers,
 		ResponseBody:    responseBody,
 	}, nil
+}
+
+func removeHTTPBlockResponsesFromHttpFileContent(httpFileContent []HTTPFileContent, config *Config) ([]HTTPFileContent, error) {
+	for i := range httpFileContent {
+		var filteredBlocks []HTTPBlock
+
+		for j := range httpFileContent[i].Blocks {
+			block := httpFileContent[i].Blocks[j]
+
+			// Skip empty blocks
+			if strings.TrimSpace(block.BlockContent) == "" {
+				continue
+			}
+
+			// Split block content into lines to check the first line
+			lines := strings.Split(block.BlockContent, "\n")
+			if len(lines) == 0 {
+				continue
+			}
+
+			firstLine := strings.TrimSpace(lines[0])
+
+			// If it's not a HTTP response line, keep this block
+			if !isHTTPResponseLine(firstLine) {
+				filteredBlocks = append(filteredBlocks, block)
+			} else {
+				// Log that we're removing a response block if verbose mode is on
+				logVerbose(config, fmt.Sprintf("Removing response block %d in file %s", block.ID, httpFileContent[i].FilePath))
+			}
+		}
+
+		// Update the blocks with the filtered list
+		httpFileContent[i].Blocks = filteredBlocks
+	}
+
+	return httpFileContent, nil
 }
