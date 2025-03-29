@@ -1,15 +1,18 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
+	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type HTTPFileContent struct {
@@ -29,10 +32,14 @@ type HTTPBlock struct {
 	ExpectedResponseString string
 }
 
-//	type rawHTTPFileContent struct {
-//	    Content  string
-//	    FilePath string
-//	}
+type HTTPResponse struct {
+	Protocol        string
+	StatusCode      int
+	StatusText      string
+	ResponseHeaders map[string]string
+	ResponseBody    string // not sure of type, so set as string but can be change later
+}
+
 func processHTTPFiles(config *Config) ([]HTTPFileContent, error) {
 	httpFileContent, err := getRawContent(config)
 	if err != nil {
@@ -62,7 +69,7 @@ func processHTTPFiles(config *Config) ([]HTTPFileContent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error at parseHTTPFiles.go - validateHTTPRequestLine() %w", err)
 	}
-	httpFileContent, err = parseHTTPBlockRequests(httpFileContent)
+	httpFileContent, err = parseHTTPBlockRequests(httpFileContent, config)
 	if err != nil {
 		return nil, fmt.Errorf("error at parseHTTPFiles.go - parseHTTPBlockRequests() %w", err)
 	}
@@ -70,120 +77,6 @@ func processHTTPFiles(config *Config) ([]HTTPFileContent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error at parseHTTPFiles.go - parseHTTPBlockResponse() %w", err)
 	}
-
-	// TODO - create function to remove the RESPONSES from the blocks
-	// maybe start working on the testing.
-
-	// fmt.Printf("Hex (spaced):\r\n% x\n", []byte(rawRequest))
-	return httpFileContent, nil
-}
-func parseHTTPBlockResponses(httpFileContent []HTTPFileContent, config *Config) ([]HTTPFileContent, error) {
-	logVerbose(config, "Processing HTTP response blocks and attaching them to requests...")
-	for i := range httpFileContent {
-		file := &httpFileContent[i]
-		logVerbose(config, fmt.Sprintf("Processing file: %s", file.FilePath))
-
-		// Iterate through blocks, but stop at the last block (since we need to look ahead)
-		for j := 0; j < len(file.Blocks)-1; j++ {
-			currentBlock := &file.Blocks[j]
-			nextBlock := &file.Blocks[j+1]
-
-			// Skip empty current blocks
-			if strings.TrimSpace(currentBlock.BlockContent) == "" {
-				logVerbose(config, fmt.Sprintf("Skipping empty block %d", currentBlock.ID))
-				continue
-			}
-
-			// Skip empty next blocks
-			if strings.TrimSpace(nextBlock.BlockContent) == "" {
-				logVerbose(config, fmt.Sprintf("Next block %d is empty, skipping", nextBlock.ID))
-				continue
-			}
-
-			// Check if current block is a request
-			currentBlockLines := strings.Split(strings.TrimSpace(currentBlock.BlockContent), "\n")
-			if len(currentBlockLines) == 0 {
-				continue
-			}
-
-			firstLineOfCurrentBlock := currentBlockLines[0]
-			if !isHTTPRequestLine(firstLineOfCurrentBlock) {
-				logVerbose(config, fmt.Sprintf("Current block %d is not a request block, skipping", currentBlock.ID))
-				continue // Skip if current block is not a request
-			}
-
-			// Check if the next block is a response
-			nextBlockLines := strings.Split(strings.TrimSpace(nextBlock.BlockContent), "\n")
-			if len(nextBlockLines) == 0 {
-				continue
-			}
-
-			firstLineOfNextBlock := nextBlockLines[0]
-			if !isHTTPResponseLine(firstLineOfNextBlock) {
-				logVerbose(config, fmt.Sprintf("Next block %d is not a response block, skipping", nextBlock.ID))
-				continue // Skip if next block is not a response
-			}
-
-			logVerbose(config, fmt.Sprintf("Processing response block %d for request block %d", nextBlock.ID, currentBlock.ID))
-
-			// Create a buffer from the next block content
-			bytesBuffer := bytes.NewBufferString(nextBlock.BlockContent)
-			bufferReader := bufio.NewReader(bytesBuffer)
-
-			// Parse the HTTP response
-			resp, err := http.ReadResponse(bufferReader, nil)
-			if err != nil {
-				return nil, fmt.Errorf("error parsing HTTP response in file %s, block %d: %w",
-					file.FilePath, nextBlock.ID, err)
-			}
-
-			// Read the response body if it exists
-			var bodyBytes []byte
-			if resp.Body != nil {
-				bodyBytes, err = io.ReadAll(resp.Body)
-				if err != nil {
-					return nil, fmt.Errorf("error reading response body in file %s, block %d: %w",
-						file.FilePath, nextBlock.ID, err)
-				}
-				// Close the body reader
-				resp.Body.Close()
-
-				// Create a new body reader for later use
-				resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-			}
-
-			// Keep a string representation for debugging or display purposes
-			var responseStr strings.Builder
-
-			// Format the response for the string representation
-			responseStr.WriteString(fmt.Sprintf("HTTP/%d.%d %d %s\r\n",
-				resp.ProtoMajor, resp.ProtoMinor, resp.StatusCode, resp.Status))
-
-			// Add headers
-			for key, values := range resp.Header {
-				for _, value := range values {
-					responseStr.WriteString(fmt.Sprintf("%s: %s\r\n", key, value))
-				}
-			}
-
-			// Add an empty line to separate headers from body
-			responseStr.WriteString("\r\n")
-
-			// Add body if exists
-			if len(bodyBytes) > 0 {
-				responseStr.Write(bodyBytes)
-			}
-
-			// Attach the response to the current block
-			currentBlock.ExpectedResponse = resp
-			currentBlock.ExpectedResponseString = responseStr.String()
-
-			logVerbose(config, fmt.Sprintf("Attached response from block %d to request block %d with status code %d",
-				nextBlock.ID, currentBlock.ID, resp.StatusCode))
-		}
-	}
-
-	logVerbose(config, "Completed processing HTTP response blocks and attaching them to requests")
 	return httpFileContent, nil
 }
 
@@ -389,95 +282,66 @@ func validateHTTPRequestLine(httpFileContent []HTTPFileContent, config *Config) 
 
 	return httpFileContent, nil
 }
-func parseHTTPBlockRequests(httpFileContent []HTTPFileContent) ([]HTTPFileContent, error) {
+
+func parseHTTPBlockRequests(httpFileContent []HTTPFileContent, config *Config) ([]HTTPFileContent, error) {
 	for i, file := range httpFileContent {
 		for j, block := range file.Blocks {
 			// Skip empty blocks
 			if strings.TrimSpace(block.BlockContent) == "" {
 				continue
 			}
-
 			// Check if the block is a request by examining the first line
 			lines := strings.Split(strings.TrimSpace(block.BlockContent), "\n")
 			if len(lines) == 0 {
 				continue
 			}
-
 			firstLine := lines[0]
-
 			// Use isHTTPRequestLine to determine if this is a request
 			if !isHTTPRequestLine(firstLine) {
 				continue // Skip if not a request (likely a response)
 			}
 
-			// Create a buffer from the block content
-			bytesBuffer := bytes.NewBufferString(block.BlockContent)
-			bufferReader := bufio.NewReader(bytesBuffer)
-
-			// Parse the HTTP request
-			req, err := http.ReadRequest(bufferReader)
+			// I do this to add the Content-Length properly
+			ptr, err := stringToHTTPStruct(block.BlockContent)
 			if err != nil {
-				return nil, fmt.Errorf("error parsing HTTP request in file %s, block %d: %w",
-					file.FilePath, block.ID, err)
+				return nil, fmt.Errorf("error parsing HTTP request in file %s, block %d: %w", file.FilePath, block.ID, err)
 			}
 
-			// Read the request body if it exists
-			var bodyBytes []byte
-			if req.Body != nil {
-				bodyBytes, err = io.ReadAll(req.Body)
-				if err != nil {
-					return nil, fmt.Errorf("error reading request body in file %s, block %d: %w",
-						file.FilePath, block.ID, err)
-				}
-				// Close the body reader
-				req.Body.Close()
+			// Create a new http request with proper timeout
+			ctx := context.Background()
+			timeout := 5 * time.Second
 
-				// Create a new body reader for later use
-				req.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+			if config.HTTPRequestTimeOut > 0 {
+				timeout = time.Duration(config.HTTPRequestTimeOut) * time.Second
 			}
+			ctx, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
 
-			// Create a new request that can be sent later
-			newReq, err := http.NewRequest(req.Method, req.URL.String(), bytes.NewBuffer(bodyBytes))
+			// Create the request with body
+			newReq, err := http.NewRequestWithContext(ctx, ptr.Method, ptr.Url.String(), strings.NewReader(ptr.Body))
 			if err != nil {
-				return nil, fmt.Errorf("error creating new request in file %s, block %d: %w",
-					file.FilePath, block.ID, err)
+				return nil, fmt.Errorf("error creating HTTP request in file %s, block %d: %w", file.FilePath, block.ID, err)
 			}
-
-			// Copy headers from the original request
-			for key, values := range req.Header {
-				for _, value := range values {
-					newReq.Header.Add(key, value)
-				}
-			}
-
-			// Keep a string representation for debugging or display purposes
-			var requestStr strings.Builder
-
-			// Format the request for the string representation
-			requestStr.WriteString(fmt.Sprintf("%s %s HTTP/%d.%d\r\n",
-				newReq.Method, newReq.URL.String(), req.ProtoMajor, req.ProtoMinor))
 
 			// Add headers
-			for key, values := range newReq.Header {
-				for _, value := range values {
-					requestStr.WriteString(fmt.Sprintf("%s: %s\r\n", key, value))
-				}
+			for key, value := range ptr.Headers {
+				newReq.Header.Set(key, value)
 			}
 
-			// Add an empty line to separate headers from body
+			// Generate the request string for logging/debugging
+			var requestStr strings.Builder
+			requestStr.WriteString(fmt.Sprintf("%s %s %s\r\n", ptr.Method, ptr.Url.String(), ptr.HTTPVersion))
+			for key, value := range ptr.Headers {
+				requestStr.WriteString(fmt.Sprintf("%s: %s\r\n", key, value))
+			}
 			requestStr.WriteString("\r\n")
+			requestStr.WriteString(ptr.Body)
 
-			// Add body if exists
-			if len(bodyBytes) > 0 {
-				requestStr.Write(bodyBytes)
-			}
-
-			// Update both the Request object and RequestString fields in the block
+			// Add request to the block
 			httpFileContent[i].Blocks[j].Request = newReq
 			httpFileContent[i].Blocks[j].RequestString = requestStr.String()
 		}
 	}
-
 	return httpFileContent, nil
 }
 
@@ -744,4 +608,247 @@ func parseBlocks(httpFileContent []HTTPFileContent) ([]HTTPFileContent, error) {
 	}
 
 	return httpFileContent, nil
+}
+
+type HTTPRequest struct {
+	Method      string
+	Url         *url.URL
+	HTTPVersion string
+	Headers     map[string]string
+	Body        string
+}
+
+func stringToHTTPStruct(requestString string) (HTTPRequest, error) {
+	// Initialize default values for the request object
+	defaultURL, _ := url.Parse("/")
+	requestObject := HTTPRequest{
+		Method:      "GET",
+		Url:         defaultURL,
+		HTTPVersion: "HTTP/1.1",
+		Headers:     make(map[string]string),
+		Body:        "",
+	}
+
+	// Normalize line endings and split the request string into lines
+	normalizedString := strings.ReplaceAll(requestString, "\r\n", "##LINEBREAK##")
+	normalizedString = strings.ReplaceAll(normalizedString, "\n", "##LINEBREAK##")
+	lines := strings.Split(normalizedString, "##LINEBREAK##")
+
+	// Parse the request line (first line)
+	if len(lines) > 0 && lines[0] != "" {
+		requestLineParts := strings.Split(lines[0], " ")
+
+		// Check if the first part looks like a method
+		validMethods := []string{"GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"}
+		isValidMethod := false
+		for _, method := range validMethods {
+			if requestLineParts[0] == method {
+				isValidMethod = true
+				break
+			}
+		}
+
+		if isValidMethod {
+			requestObject.Method = requestLineParts[0]
+
+			// If there's a second part, it's the URL path
+			if len(requestLineParts) >= 2 {
+				parsedURL, err := url.Parse(requestLineParts[1])
+				if err != nil {
+					return requestObject, err
+				}
+				requestObject.Url = parsedURL
+			}
+
+			// If there's a third part, it's the HTTP version
+			if len(requestLineParts) >= 3 {
+				requestObject.HTTPVersion = requestLineParts[2]
+			}
+		}
+	}
+
+	// Parse headers
+	headerIndex := 1
+	bodyStartIndex := -1
+
+	// Find where headers end (blank line) and collect headers
+	for headerIndex < len(lines) {
+		headerLine := lines[headerIndex]
+
+		// Empty line indicates end of headers
+		if headerLine == "" {
+			bodyStartIndex = headerIndex + 1
+			break
+		}
+
+		colonIndex := strings.Index(headerLine, ":")
+
+		if colonIndex != -1 {
+			headerName := strings.TrimSpace(headerLine[:colonIndex])
+			headerValue := strings.TrimSpace(headerLine[colonIndex+1:])
+
+			// Store header in object
+			requestObject.Headers[headerName] = headerValue
+
+			// Handle Host header specially for URL
+			if strings.ToLower(headerName) == "host" && requestObject.Url != nil {
+				// Set the host in the URL if not already set
+				if requestObject.Url.Host == "" {
+					requestObject.Url.Host = headerValue
+
+					// If scheme is not set and we have a host, default to http
+					if requestObject.Url.Scheme == "" {
+						requestObject.Url.Scheme = "http"
+					}
+				}
+			}
+		}
+
+		headerIndex++
+	}
+
+	// Extract body if present
+	if bodyStartIndex > 0 && bodyStartIndex < len(lines) {
+		bodyLines := lines[bodyStartIndex:]
+		body := strings.Join(bodyLines, "\n") // Use consistent line endings in body
+
+		if body != "" {
+			requestObject.Body = body
+
+			// Set Content-Length if missing
+			if _, exists := requestObject.Headers["Content-Length"]; !exists {
+				requestObject.Headers["Content-Length"] = strconv.Itoa(len(body))
+			}
+		}
+	}
+
+	// Handle Content-Type for POST/PUT methods if missing
+	if (requestObject.Method == "POST" || requestObject.Method == "PUT") &&
+		requestObject.Body != "" {
+		if _, exists := requestObject.Headers["Content-Type"]; !exists {
+			// Default content type for POST/PUT with body
+			requestObject.Headers["Content-Type"] = "application/x-www-form-urlencoded"
+		}
+	}
+
+	return requestObject, nil
+}
+
+// =====
+func parseHTTPBlockResponses(httpFileContent []HTTPFileContent, config *Config) ([]HTTPFileContent, error) {
+	// 1. It iterates through each HTTPFileContent in the provided slice
+	// 2. For each file, it loops through all HTTPBlocks
+	// 3. It identifies if a block is an HTTP request by checking its first line
+	// 4. When a request is found, it checks if the next block is an HTTP response
+	// 5. If a response is found, it parses it into a structured format using function parseHTTPResponse
+	for i := range httpFileContent {
+		verbose := config != nil && config.Verbose
+		for j := 0; j < len(httpFileContent[i].Blocks); j++ {
+			currentBlock := httpFileContent[i].Blocks[j]
+			if len(strings.TrimSpace(currentBlock.BlockContent)) == 0 {
+				continue
+			}
+			lines := strings.Split(currentBlock.BlockContent, "\n")
+			if len(lines) == 0 {
+				continue
+			}
+			firstLineOfCurrentBlock := strings.TrimSpace(lines[0])
+			if !isHTTPRequestLine(firstLineOfCurrentBlock) {
+				continue
+			}
+			if j+1 < len(httpFileContent[i].Blocks) {
+				nextBlock := httpFileContent[i].Blocks[j+1]
+				nextBlockLines := strings.Split(nextBlock.BlockContent, "\n")
+
+				if len(nextBlockLines) == 0 {
+					continue
+				}
+
+				firstLineOfNextBlock := strings.TrimSpace(nextBlockLines[0])
+				// 5.
+				if isHTTPResponseLine(firstLineOfNextBlock) {
+					response, err := parseHTTPResponse(nextBlock.BlockContent)
+					if err != nil {
+						if verbose {
+							log.Printf("Error parsing HTTP response: %v", err)
+						}
+						continue
+					}
+					expectedResponse := &http.Response{
+						StatusCode: response.StatusCode,
+						Proto:      response.Protocol,
+						Header:     make(http.Header),
+						Body:       io.NopCloser(strings.NewReader(response.ResponseBody)),
+					}
+
+					for key, value := range response.ResponseHeaders {
+						expectedResponse.Header.Set(key, value)
+					}
+					httpFileContent[i].Blocks[j].ExpectedResponse = expectedResponse
+					httpFileContent[i].Blocks[j].ExpectedResponseString = nextBlock.BlockContent
+					if verbose {
+						log.Printf("Found response for request %d in file %s", j, httpFileContent[i].FilePath)
+					}
+				}
+			}
+		}
+	}
+
+	return httpFileContent, nil
+}
+
+// parseHTTPResponse parses a raw HTTP response string into a structured HTTPResponse
+func parseHTTPResponse(responseContent string) (*HTTPResponse, error) {
+	// Parse first line to get Protocol, StatusCode, StatusText
+	// Pattern: <protocol> <status-code> <status-text>
+	// Process subsequent lines as headers until empty line
+	// Parse header lines (key: value)
+	// Join remaining lines as response body
+	lines := strings.Split(responseContent, "\n")
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("empty response content")
+	}
+	firstLine := strings.TrimSpace(lines[0])
+	parts := strings.SplitN(firstLine, " ", 3)
+	if len(parts) < 3 {
+		return nil, fmt.Errorf("invalid status line format: %s", firstLine)
+	}
+	protocol := parts[0]
+	statusCode, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("invalid status code: %s", parts[1])
+	}
+	statusText := parts[2]
+	headers := make(map[string]string)
+	bodyStartIndex := 1 // Default to start after status line
+
+	for i := 1; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			bodyStartIndex = i + 1
+			break
+		}
+
+		headerParts := strings.SplitN(line, ":", 2)
+		if len(headerParts) == 2 {
+			key := strings.TrimSpace(headerParts[0])
+			value := strings.TrimSpace(headerParts[1])
+			headers[key] = value
+		}
+	}
+	var bodyBuilder strings.Builder
+	for i := bodyStartIndex; i < len(lines); i++ {
+		bodyBuilder.WriteString(lines[i])
+		if i < len(lines)-1 {
+			bodyBuilder.WriteString("\n")
+		}
+	}
+	responseBody := bodyBuilder.String()
+	return &HTTPResponse{
+		Protocol:        protocol,
+		StatusCode:      statusCode,
+		StatusText:      statusText,
+		ResponseHeaders: headers,
+		ResponseBody:    responseBody,
+	}, nil
 }
