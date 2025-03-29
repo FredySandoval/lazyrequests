@@ -1,0 +1,44 @@
+###
+GET http://example.com/1 HTTP/1.1
+Host: example.com
+User-Agent: curl/8.6.0
+Accept: */*
+###
+HTTP/1.1 404 Not Found
+Content-Type: application/json
+Location: http://example.com/users/123
+
+{
+  "message": "New user created 1",
+  "user": {
+    "id": 123,
+    "firstName": "Example 1",
+    "lastName": "Person 1",
+    "email": "bsmth@example.com 1"
+  }
+}
+###
+GET http://example.com/2 HTTP/1.1
+Host: example.com
+User-Agent: curl/8.6.0
+Accept: */*
+###
+GET http://example.com/3 HTTP/1.1
+Host: example.com
+User-Agent: curl/8.6.0
+Accept: */*
+###
+HTTP/1.1 200 OK
+Content-Type: application/json
+Location: http://example.com/users/123
+
+{
+  "message": "New user created 2",
+  "user": {
+    "id": 123,
+    "firstName": "Example 2",
+    "lastName": "Person 2",
+    "email": "bsmth@example.com 2"
+  }
+}
+###

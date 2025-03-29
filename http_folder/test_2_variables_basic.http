@@ -1,0 +1,46 @@
+@baseUrl = http://localhost:8080
+@otherBaseUrl = http://example.com
+@version = version1
+@version2 = version2
+GET {{baseUrl}}/{{version}}/1 HTTP/1.1
+
+###
+GET {{baseUrl}}/{{version}}/2 HTTP/1.1
+
+###
+POST {{baseUrl}}/{{version}}/3 HTTP/1.1
+
+
+###
+GET {{otherBaseUrl}}/{{version2}}/4 HTTP/1.1
+
+###
+GET {{otherBaseUrl}}/{{version2}}/5
+
+###
+{{otherBaseUrl}}/{{version2}}/6
+
+###
+GET {{otherBaseUrl}}/{{version2}}/7?page=7&pageSize=7
+
+###
+GET {{otherBaseUrl}}/{{version2}}
+    ?page=8
+    &pageSize=8
+
+###
+GET {{otherBaseUrl}}/{{version2}}?page=2&pageSize=9
+
+###
+GET http://example.com/version1?page=2&pageSize=10 HTTP/1.1
+###
+GET http://example.com/version1?page=2&pageSize=11
+###
+POST http://example.com/version1
+?page=12
+&pageSize=12 HTTP/1.1
+
+###
+GET http://example.com/version1/
+    ?page=13
+    &pageSize=13 HTTP/1.1

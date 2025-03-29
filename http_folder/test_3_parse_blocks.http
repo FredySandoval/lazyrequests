@@ -1,0 +1,12 @@
+@baseUrl = http://example.com
+@version = version1
+### this comment identifies the POST BLOCK REQUEST 1
+POST {{baseUrl}}/{{version}}/1 HTTP/1.1
+
+### this comment identifies the POST BLOCK REQUEST 2
+POST {{baseUrl}}/{{version}}/2 HTTP/1.1
+### this comment identifies the POST BLOCK REQUEST 3
+POST {{baseUrl}}/{{version}}/3 HTTP/1.1
+
+### this comment identifies the POST BLOCK REQUEST 4
+POST {{baseUrl}}/{{version}}/4 HTTP/1.1

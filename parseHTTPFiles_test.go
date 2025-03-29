@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	testcases "lazyrequests/http_folder"
 	"path/filepath"
 	"testing"
@@ -15,6 +16,9 @@ func TestProcessHTTPFiles(t *testing.T) {
 		{"test_0_bare.http", testcases.Test_0_bare},
 		{"test_1_comments.http", testcases.Test_1_comments},
 		{"test_2_variables_basic.http", testcases.Test_2_variables_basic},
+		{"test_3_parse_blocks.http", testcases.Test_3_parse_blocks},
+		{"test_4_parse_requests.http", testcases.Test_4_parse_requests},
+		{"test_5_parse_responses.http", testcases.Test_5_parse_responses},
 	}
 
 	// Loop through all test files
@@ -39,10 +43,9 @@ func TestProcessHTTPFiles(t *testing.T) {
 				return
 			}
 
+			// LENGTH
 			blocksLength := len(httpFileContent[0].Blocks)
 			blocksLength_Expected := len(testCase.httpExpected)
-			// fmt.Println(blocksLength)
-			// fmt.Println(blocksLength_Expected)
 			if blocksLength != blocksLength_Expected {
 				t.Errorf("Incorrect length. expected: %d, Got: %d", blocksLength, blocksLength_Expected)
 				return
@@ -57,24 +60,72 @@ func TestProcessHTTPFiles(t *testing.T) {
 					t.Errorf("\033[33merror nil at httpFileContent[i].Blocks[%d]\033[0m\n", i)
 					return
 				}
-				// HTTPMethod := block.Request.Method
-				// HTTPMethod_Expected := testCase.httpExpected[i].Method
-				//if HTTPMethod == "" {
-				//	t.Errorf("No HTTPMethod[%d], Exp: %s", i, HTTPMethod_Expected)
-				//}
-				// if HTTPMethod != HTTPMethod_Expected {
-				// 	t.Errorf("Incorrect HTTP method [%d]. expected: %s, Got: %s", i, HTTPMethod, HTTPMethod_Expected)
-				// 	return
-				// }
+				HTTPMethod := block.Request.Method
+				HTTPMethod_Expected := testCase.httpExpected[i].Method
+				if HTTPMethod == "" {
+					t.Errorf("No HTTPMethod[%d], Exp: %s", i, HTTPMethod_Expected)
+				}
+				if HTTPMethod != HTTPMethod_Expected {
+					t.Errorf("Incorrect HTTP method [%d]. expected: %s, Got: %s", i, HTTPMethod, HTTPMethod_Expected)
+					return
+				}
 				// =======
 				//   URL
 				// =======
-				// URL := block.Request.URL.String()
-				// URL_Expected := testCase.httpExpected[i].Url
-				// if URL != URL_Expected {
-				// 	t.Errorf("Incorrect URL [%d]. expected: %s, Got: %s", i, URL, URL_Expected)
-				// 	return
-				// }
+				URL := block.Request.URL.String()
+				URL_Expected := testCase.httpExpected[i].Url
+				if URL != URL_Expected {
+					t.Errorf("Incorrect URL [%d].\nexpected: %s\nGot:      %s", i, URL, URL_Expected)
+					return
+				}
+
+				CommentIdentifier := block.CommentIdentifier
+				CommentIdentifier_Expected := testCase.httpExpected[i].CommentIdentifier
+				if CommentIdentifier != CommentIdentifier_Expected {
+					t.Errorf("Incorrect COMMENT [%d].\nexpected: %s\nGot:      %s", i, CommentIdentifier, CommentIdentifier_Expected)
+					return
+				}
+
+				// ====
+				// Request body
+				// ====
+				requestBody, err := io.ReadAll(block.Request.Body)
+				if err != nil {
+					t.Errorf("Error reading body, error: %v", err)
+					return
+				}
+				block.Request.Body.Close()
+				bodyString := string(requestBody)
+
+				expectedBody := testCase.httpExpected[i].Body
+				if bodyString != expectedBody {
+					t.Errorf("Incorrect Body [%d].\nexpected: %x\nGot:      %x", i, []byte(expectedBody), []byte(bodyString))
+					return
+				}
+				//fmt.Printf("Hex (spaced):\r\n% x\n", []byte(bodyString))
+				got := block.Request.Header["User-Agent"]
+				if got != nil {
+					if block.Request.Header["User-Agent"][0] != "curl/8.6.0" {
+						t.Errorf("Incorrect Body [%d].\nexpected: %s\nGot:      %s", i, "[curl/8.6.0]", block.Request.Header["User-Agent"][0])
+						return
+					}
+				}
+				// ===
+				// response
+				// ===
+				res := block.ExpectedResponse
+				res_expected := testCase.httpExpected[i]
+
+				if res != nil {
+					if res.Status != res_expected.Status {
+						t.Errorf("Incorrect Status [%d].\nexpected: %s\nGot:      %s", i, res_expected.Status, res.Status)
+						return
+					}
+					if res.StatusCode != res_expected.StatusCode {
+						t.Errorf("Incorrect Status [%d].\nexpected: %d\nGot:      %d", i, res_expected.StatusCode, res.StatusCode)
+						return
+					}
+				}
 			}
 
 		})
