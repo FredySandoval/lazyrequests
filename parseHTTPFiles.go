@@ -1,19 +1,24 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 )
+
+type HTTPRequest struct {
+	Method      string
+	Url         string
+	HTTPVersion string
+	Headers     map[string]string
+	Body        string
+}
 
 type HTTPFileContent struct {
 	RawContent      string
@@ -23,10 +28,11 @@ type HTTPFileContent struct {
 }
 
 type HTTPBlock struct {
-	ID                     int
-	BlockContent           string // represents the raw string request
-	CommentIdentifier      string
-	Request                *http.Request // represents the parsed request ready to be sent
+	ID                int
+	BlockContent      string // represents the raw string request
+	CommentIdentifier string
+	Request           HTTPRequest
+	//Request                *http.Request // represents the parsed request ready to be sent
 	RequestString          string
 	ExpectedResponse       *http.Response // represents the expected response to be compared with
 	ExpectedResponseString string
@@ -312,29 +318,29 @@ func parseHTTPBlockRequests(httpFileContent []HTTPFileContent, config *Config) (
 			}
 
 			// Create a new http request with proper timeout
-			ctx := context.Background()
-			timeout := 5 * time.Second
+			// ctx := context.Background()
+			// timeout := 5 * time.Second
 
-			if config.HTTPRequestTimeOut > 0 {
-				timeout = time.Duration(config.HTTPRequestTimeOut) * time.Second
-			}
-			ctx, cancel := context.WithTimeout(ctx, timeout)
-			defer cancel()
+			// if config.HTTPRequestTimeOut > 0 {
+			// 	timeout = time.Duration(config.HTTPRequestTimeOut) * time.Second
+			// }
+			// ctx, _ = context.WithTimeout(ctx, timeout)
+			// //defer cancel()
 
-			// Create the request with body
-			newReq, err := http.NewRequestWithContext(ctx, ptr.Method, ptr.Url.String(), strings.NewReader(ptr.Body))
-			if err != nil {
-				return nil, fmt.Errorf("error creating HTTP request in file %s, block %d: %w", file.FilePath, block.ID, err)
-			}
+			// // Create the request with body
+			// newReq, err := http.NewRequestWithContext(ctx, ptr.Method, ptr.Url.String(), strings.NewReader(ptr.Body))
+			// if err != nil {
+			// 	return nil, fmt.Errorf("error creating HTTP request in file %s, block %d: %w", file.FilePath, block.ID, err)
+			// }
 
-			// Add headers
-			for key, value := range ptr.Headers {
-				newReq.Header.Set(key, value)
-			}
+			// // Add headers
+			// for key, value := range ptr.Headers {
+			// 	newReq.Header.Set(key, value)
+			// }
 
 			// Generate the request string for logging/debugging
 			var requestStr strings.Builder
-			requestStr.WriteString(fmt.Sprintf("%s %s %s\r\n", ptr.Method, ptr.Url.String(), ptr.HTTPVersion))
+			requestStr.WriteString(fmt.Sprintf("%s %s %s\r\n", ptr.Method, ptr.Url, ptr.HTTPVersion))
 			for key, value := range ptr.Headers {
 				requestStr.WriteString(fmt.Sprintf("%s: %s\r\n", key, value))
 			}
@@ -342,7 +348,7 @@ func parseHTTPBlockRequests(httpFileContent []HTTPFileContent, config *Config) (
 			requestStr.WriteString(ptr.Body)
 
 			// Add request to the block
-			httpFileContent[i].Blocks[j].Request = newReq
+			httpFileContent[i].Blocks[j].Request = ptr
 			httpFileContent[i].Blocks[j].RequestString = requestStr.String()
 		}
 	}
@@ -614,20 +620,11 @@ func parseBlocks(httpFileContent []HTTPFileContent) ([]HTTPFileContent, error) {
 	return httpFileContent, nil
 }
 
-type HTTPRequest struct {
-	Method      string
-	Url         *url.URL
-	HTTPVersion string
-	Headers     map[string]string
-	Body        string
-}
-
 func stringToHTTPStruct(requestString string) (HTTPRequest, error) {
 	// Initialize default values for the request object
-	defaultURL, _ := url.Parse("/")
 	requestObject := HTTPRequest{
 		Method:      "GET",
-		Url:         defaultURL,
+		Url:         "/",
 		HTTPVersion: "HTTP/1.1",
 		Headers:     make(map[string]string),
 		Body:        "",
@@ -657,11 +654,11 @@ func stringToHTTPStruct(requestString string) (HTTPRequest, error) {
 
 			// If there's a second part, it's the URL path
 			if len(requestLineParts) >= 2 {
-				parsedURL, err := url.Parse(requestLineParts[1])
-				if err != nil {
-					return requestObject, err
-				}
-				requestObject.Url = parsedURL
+				//parsedURL, err := url.Parse(requestLineParts[1])
+				// if err != nil {
+				// 	return requestObject, err
+				// }
+				requestObject.Url = requestLineParts[1]
 			}
 
 			// If there's a third part, it's the HTTP version
@@ -695,17 +692,17 @@ func stringToHTTPStruct(requestString string) (HTTPRequest, error) {
 			requestObject.Headers[headerName] = headerValue
 
 			// Handle Host header specially for URL
-			if strings.ToLower(headerName) == "host" && requestObject.Url != nil {
-				// Set the host in the URL if not already set
-				if requestObject.Url.Host == "" {
-					requestObject.Url.Host = headerValue
+			// if strings.ToLower(headerName) == "host" && requestObject.Url != nil {
+			// 	// Set the host in the URL if not already set
+			// 	if requestObject.Url.Host == "" {
+			// 		requestObject.Url.Host = headerValue
 
-					// If scheme is not set and we have a host, default to http
-					if requestObject.Url.Scheme == "" {
-						requestObject.Url.Scheme = "http"
-					}
-				}
-			}
+			// 		// If scheme is not set and we have a host, default to http
+			// 		if requestObject.Url.Scheme == "" {
+			// 			requestObject.Url.Scheme = "http"
+			// 		}
+			// 	}
+			// }
 		}
 
 		headerIndex++
@@ -822,7 +819,7 @@ func parseHTTPResponse(responseContent string) (*HTTPResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid status code: %s", parts[1])
 	}
-	statusText := parts[2]
+	statusText := string(parts[1]) + " " + parts[2]
 	headers := make(map[string]string)
 	bodyStartIndex := 1 // Default to start after status line
 

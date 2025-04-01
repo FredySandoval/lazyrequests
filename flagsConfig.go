@@ -3,12 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"os"
-)
-
-var (
-	verboseLogger *log.Logger = log.New(os.Stdout, "Debug: ", log.LstdFlags)
+	"path/filepath"
+	"strings"
 )
 
 // Configuration holds the program settings
@@ -16,12 +13,13 @@ type Config struct {
 	WatchFolderPath string // folder to be watch for changes
 	WatchFilePath   string // File to be watched for changes
 	// .http files must be watched for changes as well, and if are changed, the program must be update.
-	HTTPFilePath    string // optional, if no file path is passed, it must search the first one on the same directory program was run.
-	HTTPFolderPath  string // optional, if no folder path is passed, it must search all .http files in the same directory program was run.
-	ExcludeFile     string // this can be an exact folder or a pattern of files, which means this files won't be watched.
-	ExcludeFolder   string // this means any file inside this folder will be ignore or not watched.
-	WaitRequestTime int    // Time to wait in between the HTTP requests
-	Verbose         bool   // Detailed Loging for debugging purposes
+	HTTPFilePath       string // optional, if no file path is passed, it must search the first one on the same directory program was run.
+	HTTPFolderPath     string // optional, if no folder path is passed, it must search all .http files in the same directory program was run.
+	ExcludeFile        string // this can be an exact folder or a pattern of files, which means this files won't be watched.
+	ExcludeFolder      string // this means any file inside this folder will be ignore or not watched.
+	WaitRequestTime    int    // Time to wait in between the HTTP requests
+	HTTPRequestTimeOut int    // Time each request waits before considered failed
+	Verbose            bool   // Detailed Loging for debugging purposes
 }
 
 func logVerbose(config *Config, format string, args ...any) {
@@ -30,17 +28,24 @@ func logVerbose(config *Config, format string, args ...any) {
 	}
 }
 
+// isValidHttpExtension checks if the file has a valid HTTP request extension (.http or .rest)
+func isValidHttpExtension(filePath string) bool {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	return ext == ".http" || ext == ".rest"
+}
+
 func flagsConfig() (*Config, error) {
 	// Default configuration values
 	config := &Config{
-		WatchFolderPath: "",
-		WatchFilePath:   "",
-		HTTPFilePath:    "",
-		HTTPFolderPath:  "",
-		ExcludeFile:     "",
-		ExcludeFolder:   "",
-		WaitRequestTime: 1000, // Default 1 second in milliseconds
-		Verbose:         false,
+		WatchFolderPath:    "",
+		WatchFilePath:      "",
+		HTTPFilePath:       "",
+		HTTPFolderPath:     "",
+		ExcludeFile:        "",
+		ExcludeFolder:      "",
+		WaitRequestTime:    50,   // Time in between requsts Default 50 milliseconds for developement
+		HTTPRequestTimeOut: 3000, // default 3 seconds
+		Verbose:            false,
 	}
 
 	// Parse command line flags
@@ -50,7 +55,8 @@ func flagsConfig() (*Config, error) {
 	flag.StringVar(&config.HTTPFolderPath, "http-folder", config.HTTPFolderPath, "HTTP template folder to be watched and reloaded")
 	flag.StringVar(&config.ExcludeFile, "exclude-file", config.ExcludeFile, "File pattern to exclude from watching")
 	flag.StringVar(&config.ExcludeFolder, "exclude-folder", config.ExcludeFolder, "Folder to exclude from watching")
-	flag.IntVar(&config.WaitRequestTime, "wait-time", config.WaitRequestTime, "Time to wait between HTTP requests (milliseconds)")
+	flag.IntVar(&config.WaitRequestTime, "wait-time", config.WaitRequestTime, "Time to wait between each HTTP requests (milliseconds)")
+	flag.IntVar(&config.HTTPRequestTimeOut, "req-time-out", config.WaitRequestTime, "Timeout for each request before failing (milliseconds)")
 	flag.BoolVar(&config.Verbose, "verbose", config.Verbose, "Enable verbose logging")
 
 	flag.Parse()
@@ -90,6 +96,11 @@ func flagsConfig() (*Config, error) {
 		if info.IsDir() {
 			return nil, fmt.Errorf("provided watch file is a directory: %s", config.WatchFilePath)
 		}
+
+		// Validate file extension for watch file
+		if !isValidHttpExtension(config.WatchFilePath) {
+			return nil, fmt.Errorf("watch file must have .http or .rest extension: %s", config.WatchFilePath)
+		}
 	}
 
 	// Validate HTTP paths
@@ -100,6 +111,11 @@ func flagsConfig() (*Config, error) {
 		}
 		if info.IsDir() {
 			return nil, fmt.Errorf("provided http file is a directory: %s", config.HTTPFilePath)
+		}
+
+		// Validate file extension for HTTP file
+		if !isValidHttpExtension(config.HTTPFilePath) {
+			return nil, fmt.Errorf("HTTP file must have .http or .rest extension: %s", config.HTTPFilePath)
 		}
 	}
 
