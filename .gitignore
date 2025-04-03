@@ -1,2 +1,5 @@
 watched-folder
 lazyrequests
+.vscode
+prompts.md
+.env
