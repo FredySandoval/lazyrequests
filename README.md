@@ -12,6 +12,10 @@ go build -o lazyrequests ./
 
 ```
 
+
+https://github.com/user-attachments/assets/6fb9089a-39a4-430f-bae7-14c9fc87da64
+
+
 ## Usage
 
 ```bash
