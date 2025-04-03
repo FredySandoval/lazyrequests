@@ -1,5 +1,5 @@
-@baseUrl = http://localhost:8080
-@otherBaseUrl = http://example.com
+@baseUrl = http://localhost:8080/base1
+@otherBaseUrl = http://localhost:8080/base2
 @version = version1
 @version2 = version2
 GET {{baseUrl}}/{{version}}/1 HTTP/1.1
@@ -32,15 +32,15 @@ GET {{otherBaseUrl}}/{{version2}}
 GET {{otherBaseUrl}}/{{version2}}?page=2&pageSize=9
 
 ###
-GET http://example.com/version1?page=2&pageSize=10 HTTP/1.1
+GET {{otherBaseUrl}}/version1?page=2&pageSize=10 HTTP/1.1
 ###
-GET http://example.com/version1?page=2&pageSize=11
+GET {{otherBaseUrl}}/version1?page=2&pageSize=11
 ###
-POST http://example.com/version1
+POST {{otherBaseUrl}}/version1
 ?page=12
 &pageSize=12 HTTP/1.1
 
 ###
-GET http://example.com/version1/
+GET {{otherBaseUrl}}/version1/
     ?page=13
     &pageSize=13 HTTP/1.1

@@ -1,12 +1,12 @@
 ###
-GET http://example.com/1 HTTP/1.1
-Host: example.com
+GET http://localhost:8080/1 HTTP/1.1
+Host: localhost:8080
 User-Agent: curl/8.6.0
 Accept: */*
 ###
-HTTP/1.1 404 Not Found
+HTTP/1.1 201 Created
 Content-Type: application/json
-Location: http://example.com/users/123
+Location: http://localhost:8080/1
 
 {
   "message": "New user created 1",
@@ -14,23 +14,22 @@ Location: http://example.com/users/123
     "id": 123,
     "firstName": "Example 1",
     "lastName": "Person 1",
-    "email": "bsmth@example.com 1"
+    "email": "bsmth@localhost:8080 1"
   }
 }
 ###
-GET http://example.com/2 HTTP/1.1
-Host: example.com
+GET http://example.com HTTP/1.1
 User-Agent: curl/8.6.0
 Accept: */*
 ###
-GET http://example.com/3 HTTP/1.1
-Host: example.com
+GET http://localhost:8080/3 HTTP/1.1
+Host: localhost:8080
 User-Agent: curl/8.6.0
 Accept: */*
 ###
-HTTP/1.1 200 OK
+HTTP/1.1 201 Created
 Content-Type: application/json
-Location: http://example.com/users/123
+Location: http://localhost:8080/users/3
 
 {
   "message": "New user created 2",

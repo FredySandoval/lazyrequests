@@ -17,8 +17,8 @@ type Config struct {
 	HTTPFolderPath     string // optional, if no folder path is passed, it must search all .http files in the same directory program was run.
 	ExcludeFile        string // this can be an exact folder or a pattern of files, which means this files won't be watched.
 	ExcludeFolder      string // this means any file inside this folder will be ignore or not watched.
-	WaitRequestTime    int    // Time to wait in between the HTTP requests
-	HTTPRequestTimeOut int    // Time each request waits before considered failed
+	SleepTime          int    // Time to wait in between the HTTP requests
+	HTTPRequestTimeout int    // Time each request waits before considered failed
 	Verbose            bool   // Detailed Loging for debugging purposes
 }
 
@@ -43,8 +43,8 @@ func flagsConfig() (*Config, error) {
 		HTTPFolderPath:     "",
 		ExcludeFile:        "",
 		ExcludeFolder:      "",
-		WaitRequestTime:    50,   // Time in between requsts Default 50 milliseconds for developement
-		HTTPRequestTimeOut: 3000, // default 3 seconds
+		SleepTime:          100,   // Time in between requsts Default 50 milliseconds for developement
+		HTTPRequestTimeout: 10000, // default 3 seconds
 		Verbose:            false,
 	}
 
@@ -55,8 +55,8 @@ func flagsConfig() (*Config, error) {
 	flag.StringVar(&config.HTTPFolderPath, "http-folder", config.HTTPFolderPath, "HTTP template folder to be watched and reloaded")
 	flag.StringVar(&config.ExcludeFile, "exclude-file", config.ExcludeFile, "File pattern to exclude from watching")
 	flag.StringVar(&config.ExcludeFolder, "exclude-folder", config.ExcludeFolder, "Folder to exclude from watching")
-	flag.IntVar(&config.WaitRequestTime, "wait-time", config.WaitRequestTime, "Time to wait between each HTTP requests (milliseconds)")
-	flag.IntVar(&config.HTTPRequestTimeOut, "req-time-out", config.WaitRequestTime, "Timeout for each request before failing (milliseconds)")
+	flag.IntVar(&config.SleepTime, "sleep-time", config.SleepTime, "Time to wait between each HTTP requests (milliseconds)")
+	flag.IntVar(&config.HTTPRequestTimeout, "time-out", config.HTTPRequestTimeout, "Timeout for each request before failing (milliseconds)")
 	flag.BoolVar(&config.Verbose, "verbose", config.Verbose, "Enable verbose logging")
 
 	flag.Parse()
@@ -133,7 +133,7 @@ func flagsConfig() (*Config, error) {
 		logVerbose(config, "no .http file or files provided...")
 	}
 
-	if config.WaitRequestTime < 0 {
+	if config.HTTPRequestTimeout < 0 {
 		return nil, fmt.Errorf("wait-time cannot be negative")
 	}
 

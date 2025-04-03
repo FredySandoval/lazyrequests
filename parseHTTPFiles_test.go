@@ -1,7 +1,6 @@
 package main
 
 import (
-	"io"
 	testcases "lazyrequests/http_folder"
 	"path/filepath"
 	"testing"
@@ -56,10 +55,10 @@ func TestProcessHTTPFiles(t *testing.T) {
 				// =======
 				//   HTTP Method
 				// =======
-				if block.Request == nil {
-					t.Errorf("\033[33merror nil at httpFileContent[i].Blocks[%d]\033[0m\n", i)
-					return
-				}
+				// if block.Request == nil {
+				// 	t.Errorf("\033[33merror nil at httpFileContent[i].Blocks[%d]\033[0m\n", i)
+				// 	return
+				// }
 				HTTPMethod := block.Request.Method
 				HTTPMethod_Expected := testCase.httpExpected[i].Method
 				if HTTPMethod == "" {
@@ -72,7 +71,7 @@ func TestProcessHTTPFiles(t *testing.T) {
 				// =======
 				//   URL
 				// =======
-				URL := block.Request.URL.String()
+				URL := block.Request.Url
 				URL_Expected := testCase.httpExpected[i].Url
 				if URL != URL_Expected {
 					t.Errorf("Incorrect URL [%d].\nexpected: %s\nGot:      %s", i, URL, URL_Expected)
@@ -89,13 +88,7 @@ func TestProcessHTTPFiles(t *testing.T) {
 				// ====
 				// Request body
 				// ====
-				requestBody, err := io.ReadAll(block.Request.Body)
-				if err != nil {
-					t.Errorf("Error reading body, error: %v", err)
-					return
-				}
-				block.Request.Body.Close()
-				bodyString := string(requestBody)
+				bodyString := block.Request.Body
 
 				expectedBody := testCase.httpExpected[i].Body
 				if bodyString != expectedBody {
@@ -103,10 +96,10 @@ func TestProcessHTTPFiles(t *testing.T) {
 					return
 				}
 				//fmt.Printf("Hex (spaced):\r\n% x\n", []byte(bodyString))
-				got := block.Request.Header["User-Agent"]
-				if got != nil {
-					if block.Request.Header["User-Agent"][0] != "curl/8.6.0" {
-						t.Errorf("Incorrect Body [%d].\nexpected: %s\nGot:      %s", i, "[curl/8.6.0]", block.Request.Header["User-Agent"][0])
+				got := block.Request.Headers["User-Agent"]
+				if got != "" {
+					if block.Request.Headers["User-Agent"] != "curl/8.6.0" {
+						t.Errorf("Incorrect Body [%d].\nexpected: %s\nGot:      %s", i, "[curl/8.6.0]", block.Request.Headers["User-Agent"])
 						return
 					}
 				}
